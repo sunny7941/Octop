@@ -1,7 +1,9 @@
-"""Upgrade already-installed plugins from the in-tree catalog.
+"""Install and upgrade the plugins shipped inside the wheel.
 
-The in-tree catalog is empty. New plugins install from the remote market ZIP.
-Seed only refreshes a local copy when a catalog version is newer.
+Bundled plugins opt into first-start installation with ``auto_install: true``;
+others are only refreshed when already installed. Seed only refreshes a local
+copy when the bundled version is newer, and never touches settings stored
+outside the plugin directory.
 """
 
 from __future__ import annotations
@@ -38,15 +40,19 @@ def _write_config(config_path: Path, data: dict[str, Any]) -> None:
     write_json_atomic(config_path, data)
 
 
-def _plugin_version(plugin_dir: Path) -> tuple[int, ...]:
+def _plugin_manifest(plugin_dir: Path) -> dict[str, Any]:
     path = plugin_dir / "plugin.yaml"
     if not path.is_file():
-        return (0,)
+        return {}
     try:
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
     except Exception:
-        return (0,)
-    ver = str((raw or {}).get("version") or "0") if isinstance(raw, dict) else "0"
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _plugin_version(plugin_dir: Path) -> tuple[int, ...]:
+    ver = str(_plugin_manifest(plugin_dir).get("version") or "0")
     parts: list[int] = []
     for bit in ver.split("."):
         try:
@@ -56,23 +62,49 @@ def _plugin_version(plugin_dir: Path) -> tuple[int, ...]:
     return tuple(parts) or (0,)
 
 
+def plugin_auto_install(plugin_dir: Path) -> bool:
+    """Bundled plugins opt into first-start installation with ``auto_install``."""
+    return bool(_plugin_manifest(plugin_dir).get("auto_install"))
+
+
+def plugin_default_enabled(plugin_dir: Path) -> bool:
+    """Initial global flag for a bundled plugin (absent means enabled)."""
+    return bool(_plugin_manifest(plugin_dir).get("default_enabled", True))
+
+
+def _apply_default_flag(plugins_cfg: dict[str, Any], plugin_id: str, default: bool) -> None:
+    """Set ``plugins.<id>.enabled`` only when the user has no recorded value."""
+    entry = plugins_cfg.get(plugin_id)
+    if isinstance(entry, dict) and "enabled" in entry:
+        return
+    merged = dict(entry) if isinstance(entry, dict) else {}
+    merged["enabled"] = bool(default)
+    plugins_cfg[plugin_id] = merged
+
+
 def seed_bundled_plugins(
     *,
     bundled_root: Path,
     plugins_dir: Path,
     config_path: Path,
+    known_plugins: set[str] | None = None,
 ) -> list[str]:
-    """Upgrade already-installed bundled plugins when the catalog version is newer.
+    """Install or upgrade bundled plugins.
 
-    New plugins are **not** auto-copied. Install them from the plugin marketplace
-    (``PluginManager.install_from_market``), which fetches a remote ZIP.
+    - ``auto_install: true`` plugins are copied on first start (ids in
+      ``known_plugins`` are skipped so a deliberate uninstall is not undone).
+    - Existing dest dirs are overwritten only when the bundled ``plugin.yaml``
+      version is newer; the user's enabled flag is preserved.
+    - New copies get ``default_enabled`` (from the manifest) when the user has
+      no recorded flag yet.
+    - Settings stored outside the plugin dir (for example the air-gap switch in
+      ``$OCTOP_HOME/airgap``) are never touched.
 
-    Existing dest dirs are overwritten only when the bundled ``plugin.yaml``
-    version is newer (enabled flag is preserved). Does not write config when
-    nothing was upgraded.
+    Does not write config when nothing changed.
     """
     if not bundled_root.is_dir():
         return []
+    known = known_plugins or set()
     data = _read_config(config_path)
     plugins_cfg = data.get("plugins")
     if not isinstance(plugins_cfg, dict):
@@ -88,16 +120,20 @@ def seed_bundled_plugins(
             continue
         plugin_id = child.name
         dest = plugins_dir / plugin_id
+        default_enabled = plugin_default_enabled(child)
         if not dest.exists():
+            if not plugin_auto_install(child) or plugin_id in known:
+                continue
+            shutil.copytree(child, dest)
+            copied.append(plugin_id)
+            _apply_default_flag(plugins_cfg, plugin_id, default_enabled)
             continue
         if _plugin_version(child) <= _plugin_version(dest):
             continue
-        enabled_entry = plugins_cfg.get(plugin_id)
         shutil.rmtree(dest)
         shutil.copytree(child, dest)
         copied.append(plugin_id)
-        if isinstance(enabled_entry, dict):
-            plugins_cfg[plugin_id] = dict(enabled_entry)
+        _apply_default_flag(plugins_cfg, plugin_id, default_enabled)
 
     if not copied:
         return []

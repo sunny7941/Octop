@@ -441,6 +441,15 @@ PERMISSIONS: dict[str, PermissionDef] = {
         page_zh="应用设置",
         page_en="App settings",
     ),
+    "airgap": _p(
+        "airgap",
+        "admin",
+        "断网开关",
+        "Air-gap",
+        page="advanced",
+        page_zh="应用设置",
+        page_en="App settings",
+    ),
 }
 
 ALL_PERMISSION_KEYS: set[str] = set(PERMISSIONS)

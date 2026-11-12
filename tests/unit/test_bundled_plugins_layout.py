@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import re
+import shutil
 from pathlib import Path
 
 import pytest
@@ -11,6 +13,17 @@ from octop.infra.agents.plugins.manager import PluginManager
 from octop.infra.agents.plugins.seed import seed_bundled_plugins
 from octop.infra.errors import ErrorCode, OctopError
 from octop.infra.market import PortalMarketError, clear_market_cache
+
+
+class _FakeSettings:
+    def __init__(self, data: dict[str, str] | None = None) -> None:
+        self.data = dict(data or {})
+
+    def get(self, key: str) -> str | None:
+        return self.data.get(key)
+
+    def set(self, key: str, value: str) -> None:
+        self.data[key] = value
 
 
 def _catalog_ids() -> set[str]:
@@ -24,11 +37,11 @@ def _catalog_ids() -> set[str]:
     return found
 
 
-def test_in_tree_plugin_catalog_is_empty() -> None:
-    assert _catalog_ids() == set()
+def test_in_tree_plugin_catalog_ships_egress_guard() -> None:
+    assert _catalog_ids() == {"egress-guard"}
 
 
-def test_seed_does_not_auto_install_real_catalog(tmp_path: Path) -> None:
+def test_seed_installs_bundled_airgap_disabled(tmp_path: Path) -> None:
     plugins_dir = tmp_path / "plugins"
     config_path = tmp_path / "config.json"
     copied = seed_bundled_plugins(
@@ -36,8 +49,43 @@ def test_seed_does_not_auto_install_real_catalog(tmp_path: Path) -> None:
         plugins_dir=plugins_dir,
         config_path=config_path,
     )
-    assert copied == []
-    assert list(plugins_dir.iterdir()) == [] if plugins_dir.exists() else True
+    assert copied == ["egress-guard"]
+    assert (plugins_dir / "egress-guard" / "plugin.yaml").is_file()
+    raw = json.loads(config_path.read_text(encoding="utf-8"))
+    assert raw["plugins"]["egress-guard"]["enabled"] is False
+
+
+def test_seed_records_bundled_opt_out_in_settings(tmp_path: Path) -> None:
+    """An existing DB has no flag yet; load_installed would default it to enabled."""
+    mgr = PluginManager(plugins_dir=tmp_path / "plugins", config_path=tmp_path / "config.json")
+    assert mgr.seed_bundled() == ["egress-guard"]
+    settings = _FakeSettings()
+    mgr._plugin_settings = settings
+    mgr.seed_bundled()
+    flag = json.loads(settings.data["plugins.enabled"])["egress-guard"]
+    assert flag is False
+
+
+def test_upgrade_preserves_legacy_enabled_in_settings(tmp_path: Path) -> None:
+    plugins_dir = tmp_path / "plugins"
+    dest = plugins_dir / "egress-guard"
+    shutil.copytree(default_bundled_plugins_root() / "egress-guard", dest)
+    manifest = (dest / "plugin.yaml").read_text(encoding="utf-8")
+    (dest / "plugin.yaml").write_text(
+        re.sub(r"(?m)^version: .*$", "version: 0.0.1", manifest),
+        encoding="utf-8",
+    )
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps({"plugins": {"egress-guard": {"enabled": True}}}),
+        encoding="utf-8",
+    )
+    mgr = PluginManager(plugins_dir=plugins_dir, config_path=config_path)
+    settings = _FakeSettings()
+    mgr._plugin_settings = settings
+    assert mgr.seed_bundled() == ["egress-guard"]
+    flag = json.loads(settings.data["plugins.enabled"])["egress-guard"]
+    assert flag is True
 
 
 def test_install_path_copies_fixture_plugin(tmp_path: Path) -> None:

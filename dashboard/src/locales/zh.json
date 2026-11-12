@@ -297,6 +297,7 @@
     "backupRestore": "备份与恢复",
     "environments": "环境变量",
     "loginCaptcha": "登录验证码",
+    "airGap": "断网开关",
     "search": "AI 搜索",
     "collapseSidebar": "收起",
     "expandSidebar": "展开",
@@ -4066,6 +4067,36 @@
       "saved": "通行密钥设置已保存",
       "saveFailed": "无法保存通行密钥设置",
       "loadFailed": "无法加载通行密钥设置"
+    },
+    "airGap": {
+      "title": "断网开关（阻断全部出网）",
+      "description": "开启后，Octop 会阻断本机的全部出网访问，包括 Octop 自身和其它应用。默认关闭——不打开就保持正常联网。",
+      "toggleLabel": "Octop 运行期间阻断出网",
+      "toggleHint": "打开时需要一次管理员授权，几秒内开始阻断；关闭时会删除全部断网防火墙规则，几秒内恢复联网。",
+      "status": {
+        "on": "当前状态：已断网",
+        "pending": "当前状态：已开启，正在等待后台程序下发规则",
+        "off": "当前状态：正常联网",
+        "unavailable": "当前状态：断网插件不可用",
+        "loading": "当前状态：正在读取…",
+        "unknown": "当前状态：未知（读取失败）"
+      },
+      "pendingExplain": "规则由需要管理员权限的后台程序下发，通常几秒内完成；若长时间停留在此状态，请确认 Windows 管理员授权或后台程序是否在运行。",
+      "pluginMissing": "未安装 egress-guard 插件，开关无法生效。请先在「管理 → 插件」中安装并重新加载，再打开开关。",
+      "pluginDisabled": "egress-guard 插件已安装但已禁用。请先在「管理 → 插件」中启用并重新加载，开关才能生效。",
+      "pluginNotLoaded": "egress-guard 插件已安装但未加载。请重新加载插件或重启 Octop，然后重新打开本页。",
+      "pluginCheckFailed": "无法确认 egress-guard 插件是否可用，请刷新页面重试。",
+      "pluginEscapeHint": "开关仍显示已保存的值；你也可以在这里关闭开关以恢复联网。",
+      "retry": "重试",
+      "overrideEnv": "当前被环境变量 OCTOP_AIRGAP_ENABLED 覆盖。此处的修改会被保存，但不会生效。",
+      "overrideFile": "当前被 airgap/switch.json 文件覆盖。此处的修改会被保存，但不会生效。",
+      "unsupported": "断网开关仅支持 Windows，其它平台始终保持正常联网。",
+      "effectHint": "Octop 运行期间即时生效，并在每次启动后保持，直到你关闭为止。",
+      "uacHint": "如果后台程序未运行，Windows 可能在修改防火墙规则前弹出管理员授权。",
+      "enabledToast": "断网开关已打开：即将阻断出网",
+      "disabledToast": "断网开关已关闭：网络已恢复",
+      "saveFailed": "无法更新断网开关",
+      "loadFailed": "无法加载断网开关状态"
     }
   },
   "agentConfig": {

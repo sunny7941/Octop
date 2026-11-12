@@ -431,7 +431,10 @@ class OctopServer:
             config_path=self.paths.config,
         )
         self.plugin_manager.seed_bundled()
-        self.plugin_manager.load_installed(install_deps=True)
+        # The control plane is not attached yet, so the enabled map still comes
+        # from config.json. Hook plugins may own background work; defer them
+        # until _boot_runtime reloads with the real settings.
+        self.plugin_manager.load_installed(install_deps=True, defer_hooks=True)
         self._apply_plugin_channels()
 
         import time  # noqa: PLC0415

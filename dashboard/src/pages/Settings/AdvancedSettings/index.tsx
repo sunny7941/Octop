@@ -8,6 +8,7 @@ import {
   ShieldCheck,
   Variable,
   Activity,
+  WifiOff,
 } from "lucide-react";
 import EnvironmentsPage from "../Environments";
 import { ObservabilitySettingsPanel } from "../Observability";
@@ -16,6 +17,7 @@ import { HttpsSettingsPanel } from "../HttpsSettings";
 import UpdateConfig from "./UpdateConfig";
 import CaptchaSettingsPanel from "./CaptchaSettings";
 import WebauthnSettingsPanel from "./WebauthnSettings";
+import AirGapSettingsPanel from "./AirGapSettings";
 import PageShell from "../../../layouts/PageShell";
 import TabBar, { type TabBarItem } from "../../../components/TabLabel/TabBar";
 import tabStyles from "./tabContent.module.less";
@@ -30,7 +32,8 @@ type TabKey =
   | "https"
   | "updates"
   | "captcha"
-  | "webauthn";
+  | "webauthn"
+  | "airgap";
 
 const TABS: TabBarItem<TabKey>[] = [
   { key: "env-vars", labelKey: "nav.environments", icon: Variable },
@@ -39,6 +42,7 @@ const TABS: TabBarItem<TabKey>[] = [
   { key: "https", labelKey: "nav.https", icon: Lock },
   { key: "captcha", labelKey: "nav.loginCaptcha", icon: ShieldCheck },
   { key: "webauthn", labelKey: "nav.passkeys", icon: KeyRound },
+  { key: "airgap", labelKey: "nav.airGap", icon: WifiOff },
   { key: "updates", labelKey: "nav.checkUpdates", icon: RefreshCw },
 ];
 
@@ -49,7 +53,8 @@ function parseTab(raw: string | null): TabKey {
     raw === "https" ||
     raw === "updates" ||
     raw === "captcha" ||
-    raw === "webauthn"
+    raw === "webauthn" ||
+    raw === "airgap"
   ) {
     return raw;
   }
@@ -92,6 +97,8 @@ export default function AdvancedSettingsPage() {
         return <CaptchaSettingsPanel />;
       case "webauthn":
         return <WebauthnSettingsPanel />;
+      case "airgap":
+        return <AirGapSettingsPanel />;
     }
   };
 

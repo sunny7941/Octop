@@ -1,7 +1,9 @@
-"""In-package plugin directory.
+"""In-package plugin directory shipped inside the wheel.
 
-Product plugins are installed from the remote market. This directory no longer
-ships that catalog; ``seed_bundled`` upgrades nothing when it is empty.
+Each subdirectory is one bundled plugin. ``seed_bundled`` upgrades an installed
+copy when this catalog has a newer version; plugins that declare
+``auto_install: true`` are also installed on first start (disabled when their
+manifest says ``default_enabled: false``).
 """
 
 from pathlib import Path

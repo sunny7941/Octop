@@ -297,6 +297,7 @@
     "backupRestore": "Backup & Restore",
     "environments": "Environments",
     "loginCaptcha": "Login captcha",
+    "airGap": "Air-gap",
     "search": "AI Search",
     "collapseSidebar": "Collapse",
     "expandSidebar": "Expand",
@@ -4066,6 +4067,36 @@
       "saved": "Passkey settings saved",
       "saveFailed": "Could not save passkey settings",
       "loadFailed": "Could not load passkey settings"
+    },
+    "airGap": {
+      "title": "Air-gap (block all egress)",
+      "description": "While on, Octop blocks outbound network access for this machine, including Octop itself and other applications. Off by default — Octop keeps normal networking unless you turn this on.",
+      "toggleLabel": "Block outbound network while Octop runs",
+      "toggleHint": "Turning it on asks for administrator approval once, then blocks egress within seconds. Turning it off removes every air-gap firewall rule and restores connectivity within seconds.",
+      "status": {
+        "on": "Status: egress blocked",
+        "pending": "Status: enabled, waiting for the helper to apply the rules",
+        "off": "Status: network normal",
+        "unavailable": "Status: air-gap plugin unavailable",
+        "loading": "Status: reading…",
+        "unknown": "Status: unknown (could not load)"
+      },
+      "pendingExplain": "Rules are applied by an elevated helper process. This normally takes a few seconds; if the status stays here, approve the Windows administrator prompt or check that the helper process is running.",
+      "pluginMissing": "The egress-guard plugin is not installed, so the switch cannot take effect. Install it from Admin → Plugins, then reload and turn the switch on.",
+      "pluginDisabled": "The egress-guard plugin is installed but disabled. Enable it in Admin → Plugins, then reload so the switch can take effect.",
+      "pluginNotLoaded": "The egress-guard plugin is installed but not loaded. Reload plugins or restart Octop, then reopen this page.",
+      "pluginCheckFailed": "Could not confirm whether the egress-guard plugin is available. Reload this page and try again.",
+      "pluginEscapeHint": "The saved value is still shown. You can turn the switch off here to restore networking.",
+      "retry": "Retry",
+      "overrideEnv": "Currently overridden by the OCTOP_AIRGAP_ENABLED environment variable. Changes here are stored but do not take effect.",
+      "overrideFile": "Currently overridden by the airgap/switch.json file. Changes here are stored but do not take effect.",
+      "unsupported": "The air-gap is only supported on Windows. Other platforms always keep normal networking.",
+      "effectHint": "Applies while Octop is running and again at every start until you turn it off.",
+      "uacHint": "If the helper is not running, Windows may ask for administrator approval before the firewall rules can be changed.",
+      "enabledToast": "Air-gap on: outbound traffic will be blocked",
+      "disabledToast": "Air-gap off: network restored",
+      "saveFailed": "Could not update the air-gap switch",
+      "loadFailed": "Could not load the air-gap switch"
     }
   },
   "agentConfig": {

@@ -13,6 +13,7 @@ from octop.api.common.content_disposition import content_disposition
 from octop.api.common.upload_limit import read_upload_capped
 from octop.api.deps import current_user, get_server, require_permission
 from octop.config import OctopConfig
+from octop.infra import airgap as airgap_switch
 from octop.infra.agents.security import tool_execution_may_pause
 from octop.infra.auth.captcha import current_env, load_view, save_settings
 from octop.infra.auth.mfa.settings import load_view as load_webauthn_view
@@ -336,3 +337,63 @@ async def put_webauthn_settings(
         target=str(view.get("rp_id") or ""),
     )
     return WebauthnSettingsResponse.model_validate(view)
+
+
+class AirGapSettingsResponse(BaseModel):
+    enabled: bool = Field(
+        description="Whether the air-gap switch is on. Off by default; while on, outbound traffic is blocked."
+    )
+    source: Literal["env", "switch_file", "settings", "default"] = Field(
+        description="Where the effective value comes from. env/switch_file are internal overrides."
+    )
+    active: bool = Field(
+        description="Whether the elevated helper is running, i.e. the firewall rules are applied."
+    )
+    supported: bool = Field(description="Egress control is Windows-only.")
+
+
+class AirGapSettingsPut(BaseModel):
+    enabled: bool = Field(description="Turn the air-gap on (block egress) or off (restore egress).")
+
+
+def _airgap_view(server: Any) -> AirGapSettingsResponse:
+    state = airgap_switch.resolve(server.services.settings_repo, server.services.paths.root)
+    return AirGapSettingsResponse(
+        enabled=state.enabled,
+        source=state.source,
+        active=state.active,
+        supported=state.supported,
+    )
+
+
+@router.get(
+    "/settings/airgap",
+    summary="Air-gap (egress block) switch",
+    response_model=AirGapSettingsResponse,
+)
+async def get_airgap_settings(
+    _admin: User = Depends(require_permission("airgap")),
+    server: Any = Depends(get_server),
+) -> AirGapSettingsResponse:
+    """Return the effective switch state and whether the air-gap is currently applied."""
+    return _airgap_view(server)
+
+
+@router.put(
+    "/settings/airgap",
+    summary="Update the air-gap (egress block) switch",
+    response_model=AirGapSettingsResponse,
+)
+async def put_airgap_settings(
+    body: AirGapSettingsPut,
+    admin: User = Depends(require_permission("airgap")),
+    server: Any = Depends(get_server),
+) -> AirGapSettingsResponse:
+    """Persist the switch. The egress-guard plugin applies it within seconds."""
+    airgap_switch.set_enabled(server.services.settings_repo, body.enabled)
+    server.services.audit_repo.write(
+        actor=admin.username,
+        action="airgap.settings.update",
+        target="on" if body.enabled else "off",
+    )
+    return _airgap_view(server)

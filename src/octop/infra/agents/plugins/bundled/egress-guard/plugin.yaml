@@ -1,0 +1,23 @@
+id: egress-guard
+version: 1.4.1
+name: Egress Guard
+kind: hook
+entry: main.py
+# Shipped with the wheel: install on first start, but stay disabled until the
+# user turns it on from Settings → App settings → Air-gap.
+auto_install: true
+default_enabled: false
+description: >-
+  Optional air-gap for the whole Octop lifetime, controlled by the product
+  setting *Settings → App settings → Air-gap* (settings row
+  ``airgap_enabled``, exposed at ``GET/PUT /api/settings/airgap``). OFF by
+  default: Octop keeps the machine's network untouched unless a user turns the
+  switch on. Internal overrides (``OCTOP_AIRGAP_ENABLED`` env var, then
+  ``airgap/switch.json``) still win over the setting. When enabled, the plugin
+  launches an elevated helper that ensures outbound Block rules for Octop, the
+  Ollama daemon and every application, then polls the server. When Octop exits
+  or the switch is turned off, the helper removes every air-gap rule so egress
+  is restored automatically. One UAC prompt per enabled Octop session. The
+  OctopAirGap watchdog honors the same switch. The plugin seeds its runtime
+  scripts into ``$OCTOP_HOME/airgap`` (default ``~/.octop/airgap``) on load.
+  Fully local — no network access is required or attempted.

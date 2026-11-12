@@ -1,0 +1,81 @@
+.page {
+  max-width: 880px;
+}
+
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.card {
+  border: 1px solid var(--fn-border-primary);
+  border-radius: 12px;
+  background: var(--fn-bg-elevated);
+  padding: 16px 18px 18px;
+}
+
+.toggleRow {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.toggleCopy {
+  min-width: 0;
+  padding-top: 1px;
+}
+
+.toggleLabel {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+  color: var(--fn-text-primary);
+}
+
+.toggleHint {
+  margin: 4px 0 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--fn-text-secondary);
+}
+
+.statusOn {
+  margin: 8px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--fn-color-danger, #d4380d);
+}
+
+.statusOff {
+  margin: 8px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--fn-color-success, #389e0d);
+}
+
+.statusPending {
+  margin: 8px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--fn-color-warning, #d46b08);
+}
+
+.statusNeutral {
+  margin: 8px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--fn-text-tertiary);
+}
+
+.note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--fn-text-tertiary);
+}

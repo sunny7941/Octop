@@ -58,6 +58,17 @@ export interface WebauthnSettingsPut {
   passwordless_login?: boolean;
 }
 
+export interface OctopAirGapSettings {
+  enabled: boolean;
+  source: "env" | "switch_file" | "settings" | "default";
+  active: boolean;
+  supported: boolean;
+}
+
+export interface OctopAirGapSettingsPut {
+  enabled: boolean;
+}
+
 export const octopSettingsApi = {
   timezone: () => request<OctopTimezoneSettings>("/settings/timezone"),
   upload: () => request<OctopUploadSettings>("/settings/upload"),
@@ -78,6 +89,13 @@ export const octopSettingsApi = {
   webauthn: () => request<WebauthnSettings>("/settings/webauthn"),
   putWebauthn: (body: WebauthnSettingsPut) =>
     request<WebauthnSettings>("/settings/webauthn", {
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+  airgap: () =>
+    request<OctopAirGapSettings>("/settings/airgap", { cache: "no-store" }),
+  putAirgap: (body: OctopAirGapSettingsPut) =>
+    request<OctopAirGapSettings>("/settings/airgap", {
       method: "PUT",
       body: JSON.stringify(body),
     }),

@@ -67,7 +67,7 @@ export const PERM = {
     "security_skill_scan",
     "admin_console",
   ],
-  advancedPage: ["update", "envs", "tls", "observability", "backup", "captcha"],
+  advancedPage: ["update", "envs", "tls", "observability", "backup", "captcha", "airgap"],
   experts: ["experts"],
   tasks: ["tasks"],
   tokenUsage: ["token_usage"],
@@ -139,6 +139,7 @@ export const ADVANCED_TAB_PERMISSIONS = {
   captcha: "captcha",
   // Same gate as /api/settings/webauthn (require_permission("captcha")).
   webauthn: "captcha",
+  airgap: "airgap",
 } as const;
 
 export const SECURITY_TAB_PERMISSIONS = {

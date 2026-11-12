@@ -139,6 +139,52 @@ def test_seed_does_not_add_new_bundled_id(tmp_path: Path) -> None:
     assert not (plugins_dir / "qrcode").exists()
 
 
+def test_seed_installs_auto_install_plugin_disabled(tmp_path: Path) -> None:
+    bundled = tmp_path / "bundled"
+    dest = _write_plugin(bundled, "weather")
+    (dest / "plugin.yaml").write_text(
+        "id: weather\nversion: 0.1.0\nname: weather\nkind: hook\nentry: main.py\n"
+        "auto_install: true\ndefault_enabled: false\n",
+        encoding="utf-8",
+    )
+    plugins_dir = tmp_path / "plugins"
+    config_path = tmp_path / "config.json"
+    copied = seed_bundled_plugins(
+        bundled_root=bundled,
+        plugins_dir=plugins_dir,
+        config_path=config_path,
+    )
+    assert copied == ["weather"]
+    raw = json.loads(config_path.read_text(encoding="utf-8"))
+    assert raw["plugins"]["weather"]["enabled"] is False
+
+
+def test_seed_does_not_reinstall_auto_plugin_after_uninstall(tmp_path: Path) -> None:
+    bundled = tmp_path / "bundled"
+    dest = _write_plugin(bundled, "weather")
+    (dest / "plugin.yaml").write_text(
+        "id: weather\nversion: 0.1.0\nname: weather\nkind: hook\nentry: main.py\n"
+        "auto_install: true\ndefault_enabled: false\n",
+        encoding="utf-8",
+    )
+    plugins_dir = tmp_path / "plugins"
+    config_path = tmp_path / "config.json"
+    seed_bundled_plugins(
+        bundled_root=bundled,
+        plugins_dir=plugins_dir,
+        config_path=config_path,
+    )
+    shutil.rmtree(plugins_dir / "weather")
+    copied = seed_bundled_plugins(
+        bundled_root=bundled,
+        plugins_dir=plugins_dir,
+        config_path=config_path,
+        known_plugins={"weather"},
+    )
+    assert copied == []
+    assert not (plugins_dir / "weather").exists()
+
+
 def test_load_installed_skips_disabled_before_import(tmp_path: Path) -> None:
     plugins_dir = tmp_path / "plugins"
     _write_plugin(plugins_dir, "weather")
@@ -189,3 +235,48 @@ def test_seed_refuses_corrupt_config_and_preserves_bytes(tmp_path: Path) -> None
         )
     assert excinfo.value.code is ErrorCode.CONFIG_FILE_CORRUPT
     assert config_path.read_text(encoding="utf-8") == original
+
+
+def test_load_installed_defers_hook_plugins(tmp_path: Path) -> None:
+    plugins_dir = tmp_path / "plugins"
+    dest = _write_plugin(plugins_dir, "weather")
+    (dest / "plugin.yaml").write_text(
+        "id: weather\nversion: 0.1.0\nname: weather\nkind: hook\nentry: main.py\n",
+        encoding="utf-8",
+    )
+    (dest / "main.py").write_text(
+        "from octop_harness.plugins import PluginContext\n"
+        "\n"
+        "\n"
+        "def setup(ctx: PluginContext) -> None:\n"
+        "    pass\n",
+        encoding="utf-8",
+    )
+    mgr = PluginManager(plugins_dir=plugins_dir, config_path=tmp_path / "config.json")
+    assert mgr.load_installed(install_deps=False, defer_hooks=True) == []
+    assert PluginRegistry().get("weather") is None
+    loaded = mgr.load_installed(install_deps=False)
+    assert [item.manifest.id for item in loaded] == ["weather"]
+
+
+def test_disable_calls_plugin_teardown(tmp_path: Path) -> None:
+    plugins_dir = tmp_path / "plugins"
+    dest = _write_plugin(plugins_dir, "worker")
+    (dest / "main.py").write_text(
+        "from pathlib import Path\n"
+        "\n"
+        "from octop_harness.plugins import PluginContext\n"
+        "\n"
+        "\n"
+        "def setup(ctx: PluginContext) -> None:\n"
+        "    pass\n"
+        "\n"
+        "\n"
+        "def teardown(ctx, reason: str = 'reload') -> None:\n"
+        "    Path(__file__).with_name('teardown.txt').write_text(reason, encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+    mgr = PluginManager(plugins_dir=plugins_dir, config_path=tmp_path / "config.json")
+    mgr.load_installed(install_deps=False)
+    mgr.set_enabled("worker", False)
+    assert (dest / "teardown.txt").read_text(encoding="utf-8") == "disable"

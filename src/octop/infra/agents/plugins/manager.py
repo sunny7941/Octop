@@ -8,6 +8,7 @@ import logging
 import os
 import re
 import shutil
+import sys
 import tempfile
 import urllib.error
 import urllib.request
@@ -100,6 +101,24 @@ def _load_plugin_dir(plugin_dir: Path, *, install_deps: bool) -> LoadedPlugin:
     """Load one plugin, accepting the pre-rename ``harness_agent`` import."""
     ensure_legacy_harness_agent_alias()
     return load_plugin_dir(plugin_dir, install_deps=install_deps)
+
+
+def _run_teardown(plugin_id: str, ctx: Any | None, reason: str) -> None:
+    """Call an optional ``teardown(ctx, reason)`` exported by the plugin entry.
+
+    Plugins that own background work (threads, child processes) implement the
+    hook so disabling, reloading or uninstalling them stops that work. Plugins
+    without the hook are unaffected. ``reason`` is one of ``reload``,
+    ``disable`` or ``uninstall``.
+    """
+    module = sys.modules.get(f"harness_plugin_{plugin_id.replace('-', '_')}")
+    hook = getattr(module, "teardown", None) if module is not None else None
+    if not callable(hook):
+        return
+    try:
+        hook(ctx, reason)
+    except Exception as exc:  # noqa: BLE001 - teardown must never break unload
+        logger.warning("plugin %s teardown failed: %s", plugin_id, exc, exc_info=True)
 
 
 def _read_global_plugins(config_path: Path) -> dict[str, bool]:
@@ -530,17 +549,57 @@ class PluginManager:
         self._bump_plugin_revision()
 
     def seed_bundled(self) -> list[str]:
-        """Upgrade already-installed bundled plugins when catalog versions are newer."""
+        """Install/upgrade bundled plugins, then mirror them into the control plane."""
         from octop.infra.agents.plugins.bundled import default_bundled_plugins_root
-        from octop.infra.agents.plugins.seed import seed_bundled_plugins
+        from octop.infra.agents.plugins.seed import (
+            plugin_auto_install,
+            plugin_default_enabled,
+            seed_bundled_plugins,
+        )
 
+        root = default_bundled_plugins_root()
+        settings_map = self.global_enabled_map() if self._plugin_settings is not None else {}
+        config_map = _read_global_plugins(self._config_path)
+        # Union: a database that predates a bundled plugin has no flag for it,
+        # while config.json may still record the user's pre-upgrade choice.
+        known = set(settings_map) | set(config_map)
         copied = seed_bundled_plugins(
-            bundled_root=default_bundled_plugins_root(),
+            bundled_root=root,
             plugins_dir=self._plugins_dir,
             config_path=self._config_path,
+            known_plugins=known,
         )
-        for plugin_id in copied:
-            self._persist_plugin_tree(plugin_id)
+        if not root.is_dir():
+            return copied
+        owners: set[str] | None = None
+        if self._control_files is not None:
+            owners = set(self._control_files.owners(ControlFileRepo.PLUGIN))
+            for plugin_id in copied:
+                self._persist_plugin_tree(plugin_id)
+                owners.add(plugin_id)
+        for child in sorted(root.iterdir(), key=lambda p: p.name):
+            if not child.is_dir() or child.name.startswith("_"):
+                continue
+            if not (child / "plugin.yaml").is_file():
+                continue
+            if not (self._plugins_dir / child.name / "plugin.yaml").is_file():
+                continue
+            if owners is not None and child.name not in owners:
+                # Installed while the control plane was offline (first start) or
+                # on a DB that predates this bundled plugin; mirror the tree so
+                # _ensure_plugin_cache does not delete it.
+                self._persist_plugin_tree(child.name)
+            if self._plugin_settings is None or child.name in settings_map:
+                continue
+            if not plugin_auto_install(child):
+                continue
+            # load_installed defaults a missing flag to enabled, so record the
+            # opt-out explicitly: config.json's pre-attach value wins, then the
+            # manifest default.
+            self._set_enabled_flag(
+                child.name,
+                config_map.get(child.name, plugin_default_enabled(child)),
+            )
         return copied
 
     def market_root(self) -> Path:
@@ -685,7 +744,20 @@ class PluginManager:
             raise OctopError(ErrorCode.NOT_FOUND, "invalid marketplace asset path")
         return self._resolve_plugin_asset(plugin_dir, cleaned)
 
-    def load_installed(self, *, install_deps: bool = True) -> list[LoadedPlugin]:
+    def load_installed(
+        self,
+        *,
+        install_deps: bool = True,
+        defer_hooks: bool = False,
+    ) -> list[LoadedPlugin]:
+        """(Re)load every enabled plugin from disk.
+
+        ``defer_hooks`` skips ``kind: hook`` plugins. Callers use it before the
+        control plane is attached, when the enabled map still comes from
+        ``config.json`` and is not authoritative: hook plugins may start
+        threads or child processes, so they must not run until the real
+        settings are known. The post-attach load starts them if enabled.
+        """
         self._ensure_plugin_cache()
         enabled = self.global_enabled_map()
         previous = {plugin.manifest.id: plugin for plugin in PluginRegistry().all_loaded()}
@@ -698,12 +770,19 @@ class PluginManager:
                 logger.error("skip plugin dir %s: %s", plugin_dir, exc)
                 continue
             if enabled.get(manifest.id, True) is False:
+                old = previous.get(manifest.id)
+                if old is not None:
+                    _run_teardown(manifest.id, old.context, "disable")
+                continue
+            old = previous.get(manifest.id)
+            if defer_hooks and str(manifest.kind) == "hook":
+                if old is not None:
+                    _run_teardown(manifest.id, old.context, "reload")
                 continue
             try:
                 fingerprint = (
                     _channel_fingerprint(plugin_dir) if str(manifest.kind) == "channel" else ""
                 )
-                old = previous.get(manifest.id)
                 if (
                     str(manifest.kind) == "channel"
                     and old is not None
@@ -712,6 +791,8 @@ class PluginManager:
                     PluginRegistry().register(old)
                     loaded.append(old)
                 else:
+                    if old is not None:
+                        _run_teardown(manifest.id, old.context, "reload")
                     loaded.append(_load_plugin_dir(plugin_dir, install_deps=install_deps))
                 if str(manifest.kind) == "channel":
                     _CHANNEL_FINGERPRINTS[manifest.id] = fingerprint
@@ -867,6 +948,7 @@ class PluginManager:
                         for path in loaded.skills_dir.iterdir()
                         if path.is_dir() and (path / "SKILL.md").is_file()
                     }
+            _run_teardown(plugin_id, loaded.context if loaded is not None else None, "disable")
             unload_plugin(plugin_id)
 
         for item in self.list_installed():
@@ -961,6 +1043,8 @@ class PluginManager:
                     f"plugin already installed: {manifest.id}",
                     details={"id": manifest.id},
                 )
+            loaded = PluginRegistry().get(manifest.id)
+            _run_teardown(manifest.id, loaded.context if loaded is not None else None, "reload")
             shutil.rmtree(dest)
         shutil.copytree(source, dest)
         self._persist_plugin_tree(manifest.id)
@@ -1076,6 +1160,8 @@ class PluginManager:
                 ) from exc
 
     def uninstall(self, plugin_id: str) -> None:
+        loaded = PluginRegistry().get(plugin_id)
+        _run_teardown(plugin_id, loaded.context if loaded is not None else None, "uninstall")
         unload_plugin(plugin_id)
         self._tool_catalog.pop(plugin_id, None)
         self._skill_catalog.pop(plugin_id, None)
