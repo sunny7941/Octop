@@ -218,6 +218,58 @@ async def test_cronjob_create_persists_task_type(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_cronjob_create_deduplicates_identical_job(tmp_path: Path) -> None:
+    services = _make_services(tmp_path)
+    agent_id = new_ulid()
+    user_id = services.repos.user_repo.create(username="dup", password_hash="x", role="user")
+    services.repos.agent_repo.create(agent_id=agent_id, user_id=user_id, name="a")
+    mgr = _make_manager(services)
+    create = _tool_by_name(build_cronjob_tools(mgr), "cronjob_create")
+
+    with _configurable(agent_id=agent_id, user=str(user_id)):
+        first = json.loads(
+            await create.ainvoke(
+                {"trigger": "cron:0 10 * * *", "prompt": "review notes", "name": "Daily review"}
+            )
+        )
+        second = json.loads(
+            await create.ainvoke(
+                {"trigger": "cron:0 10 * * *", "prompt": "review notes", "name": "Daily review"}
+            )
+        )
+
+    assert first["id"] == second["id"]
+    assert second["deduplicated"] is True
+    assert len(mgr.list_by_agent(agent_id, include_disabled=True)) == 1
+
+
+@pytest.mark.asyncio
+async def test_cronjob_create_keeps_distinct_names_on_same_schedule(tmp_path: Path) -> None:
+    services = _make_services(tmp_path)
+    agent_id = new_ulid()
+    user_id = services.repos.user_repo.create(username="keep", password_hash="x", role="user")
+    services.repos.agent_repo.create(agent_id=agent_id, user_id=user_id, name="a")
+    mgr = _make_manager(services)
+    create = _tool_by_name(build_cronjob_tools(mgr), "cronjob_create")
+
+    with _configurable(agent_id=agent_id, user=str(user_id)):
+        first = json.loads(
+            await create.ainvoke(
+                {"trigger": "cron:0 10 * * *", "prompt": "review notes", "name": "Morning review"}
+            )
+        )
+        second = json.loads(
+            await create.ainvoke(
+                {"trigger": "cron:0 10 * * *", "prompt": "review notes", "name": "Evening review"}
+            )
+        )
+
+    assert first["id"] != second["id"]
+    assert "deduplicated" not in second
+    assert len(mgr.list_by_agent(agent_id, include_disabled=True)) == 2
+
+
+@pytest.mark.asyncio
 async def test_cronjob_create_requires_name(tmp_path: Path) -> None:
     from pydantic import ValidationError
 

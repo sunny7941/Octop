@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import TYPE_CHECKING, Annotated, Any
 
 from langchain_core.tools import StructuredTool
@@ -23,6 +24,8 @@ if TYPE_CHECKING:
     from octop.infra.cron.manager import CronManager
     from octop.infra.db.repos.cron import CronJobRow
 
+logger = logging.getLogger(__name__)
+
 _TRIGGER_HELP = (
     "Schedule spec: cron:<5-field expr> (e.g. cron:0 9 * * *), "
     "interval:<seconds> (e.g. interval:3600), date:<ISO8601> (runs once, then the job "
@@ -42,6 +45,10 @@ _CRONJOB_CREATE_DESC = (
     "Create a scheduled cron job bound to the current conversation session. "
     "Results are delivered to the same channel (QQ/WeChat/dashboard/…). "
     "name is required: a short label for the job list. "
+    "Creating the same job twice is a no-op: when an identical job "
+    "(same name, trigger and task_type) already exists for this expert, "
+    "the existing job is returned with deduplicated=true — do not retry "
+    "cronjob_create after seeing that flag. "
     f"task_type: {_TASK_TYPE_HELP} "
     "Examples: 'remind me to drink water at 14:00 daily' → "
     "name='Daily water reminder', task_type=text, prompt='Time to drink water'; "
@@ -87,6 +94,28 @@ def _get_owned(mgr: CronManager, cron_id: str, agent_id: str, user_id: int) -> C
     if row is None or row.agent_id != agent_id:
         raise ValueError(f"cron job not found: {cron_id}")
     return row
+
+
+def _find_duplicate(
+    mgr: CronManager,
+    agent_id: str,
+    *,
+    name: str,
+    trigger: str,
+    task_type: str,
+) -> CronJobRow | None:
+    """Return an existing job that already covers this exact schedule.
+
+    A local model that keeps re-issuing the same ``cronjob_create`` would
+    otherwise pile up identical jobs — each one firing its own turn at the
+    next cron tick. Matching on name + trigger + task_type makes the tool
+    idempotent without blocking a user who genuinely wants two differently
+    named jobs on the same schedule.
+    """
+    for row in mgr.list_by_agent(agent_id, include_disabled=True):
+        if row.name == name and row.trigger == trigger and row.task_type == task_type:
+            return row
+    return None
 
 
 def _ok(data: Any) -> str:
@@ -161,18 +190,46 @@ def build_cronjob_tools(cron_manager: CronManager) -> list[StructuredTool]:
             _require_agent_owner(mgr, agent_id, user_id)
             cron_id = new_cron_id()
             cleaned_prompt = require_cron_prompt(prompt)
+            # Normalize once so the duplicate check compares the exact string
+            # that ``mgr.create`` would persist.
+            cleaned_name = require_cron_name(name, prompt=cleaned_prompt, cron_id=cron_id)
+            cleaned_task_type = require_cron_task_type(task_type)
             spec = CronCreateSpec(
                 cron_id=cron_id,
                 agent_id=agent_id,
                 user_id=user_id,
-                name=require_cron_name(name, prompt=cleaned_prompt, cron_id=cron_id),
+                name=cleaned_name,
                 trigger=trigger,
                 prompt=cleaned_prompt,
                 fresh_thread=fresh_thread,
                 session_key=session_key,
                 enabled=enabled,
-                task_type=require_cron_task_type(task_type),
+                task_type=cleaned_task_type,
             )
+            duplicate = _find_duplicate(
+                mgr,
+                agent_id,
+                name=cleaned_name,
+                trigger=spec.trigger,
+                task_type=cleaned_task_type,
+            )
+            if duplicate is not None:
+                logger.info(
+                    "cronjob_create deduplicated agent=%s name=%r cron_id=%s",
+                    agent_id,
+                    cleaned_name,
+                    duplicate.cron_id,
+                )
+                return _ok(
+                    {
+                        **duplicate.to_public_dict(),
+                        "deduplicated": True,
+                        "message": (
+                            "An identical cron job already exists "
+                            f"({duplicate.cron_id}). Do not create it again."
+                        ),
+                    }
+                )
             row = await mgr.create(spec)
             return _ok(row.to_public_dict())
         except Exception as exc:
