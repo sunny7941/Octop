@@ -156,3 +156,36 @@ def test_start_ollama_server_inherits_models_dir(monkeypatch: pytest.MonkeyPatch
     assert isinstance(env, dict)
     assert env.get("OLLAMA_MODELS") == "/data/ollama-models"
     assert captured["cmd"] == ["/usr/bin/ollama", "serve"]
+
+
+def _capture_spawn_env(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
+    captured: dict[str, object] = {}
+    monkeypatch.setattr(mod.shutil, "which", lambda _name: "/usr/bin/ollama")
+    monkeypatch.setattr(mod.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(mod, "_is_ollama_reachable", lambda: True)
+
+    def fake_popen(cmd: list[str], **kwargs: object) -> MagicMock:
+        captured["env"] = kwargs.get("env")
+        return MagicMock()
+
+    monkeypatch.setattr(mod.subprocess, "Popen", fake_popen)
+    mod._start_ollama_server()
+    env = captured["env"]
+    assert isinstance(env, dict)
+    return env
+
+
+def test_start_ollama_server_keeps_model_warm_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("OLLAMA_KEEP_ALIVE", raising=False)
+    env = _capture_spawn_env(monkeypatch)
+    assert env.get("OLLAMA_KEEP_ALIVE") == mod._DEFAULT_KEEP_ALIVE
+
+
+def test_start_ollama_server_respects_explicit_keep_alive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OLLAMA_KEEP_ALIVE", "-1")
+    env = _capture_spawn_env(monkeypatch)
+    assert env.get("OLLAMA_KEEP_ALIVE") == "-1"

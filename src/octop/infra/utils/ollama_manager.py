@@ -26,6 +26,11 @@ _applied_models_dir: str | None = None
 _DEFAULT_REGISTRY = "registry.ollama.ai"
 _DEFAULT_NAMESPACE = "library"
 
+# Ollama unloads the active model after 5 idle minutes by default. The next
+# turn then pays a full reload (tens of seconds for a 14B model) and the first
+# call can time out, so keep the model warm across a working session.
+_DEFAULT_KEEP_ALIVE = "30m"
+
 
 class OllamaModelInfo(BaseModel):
     """Metadata for a single Ollama model returned by ``ollama.list()``."""
@@ -293,13 +298,16 @@ def _start_ollama_server() -> None:
         )
 
     logger.info("Ollama daemon not reachable, starting ollama serve …")
+    env = os.environ.copy()
+    # An explicit OLLAMA_KEEP_ALIVE in the environment still wins.
+    env.setdefault("OLLAMA_KEEP_ALIVE", _DEFAULT_KEEP_ALIVE)
     try:
         subprocess.Popen(
             [ollama_bin, "serve"],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True,
-            env=os.environ.copy(),
+            env=env,
         )
     except Exception as exc:
         raise OSError(f"Failed to start ollama serve: {exc}") from exc
