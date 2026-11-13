@@ -352,6 +352,16 @@ async def set_active_model(
     server: Any = Depends(get_server),
 ) -> dict[str, str]:
     """Set the globally preferred model used when no agent override applies."""
+    # Reject refs that cannot serve a request. Without this the setting is stored
+    # but ``_resolve_configured_fallback_model_ref`` silently falls back to the
+    # first usable model, so the UI shows a switch that never took effect.
+    ref = f"{body.provider_name}/{body.model}"
+    if not server.app_runtime.agent_registry.providers.is_model_ref_usable(ref):
+        raise OctopError(
+            ErrorCode.MODEL_NOT_AVAILABLE,
+            f"model {ref!r} is not available on provider {body.provider_name!r}",
+            details={"ref": ref},
+        )
     server.services.settings_repo.set_active_model(body.provider_name, body.model)
     if server.app_runtime is not None:
         await server.app_runtime.agent_registry.on_provider_changed(active_model_changed=True)

@@ -182,3 +182,53 @@ async def test_admin_stream_usage_defaults_and_patch(env):
     )
     assert patched.status_code == 200
     assert patched.json()["stream_usage"] is False
+
+
+async def test_set_active_model_rejects_unavailable_ref(env):
+    """PUT /providers/active-model refuses a ref that cannot serve a request.
+
+    Without the check the setting is stored, the UI shows the switch, and every
+    agent silently falls back to the first usable model.
+    """
+    c, _, auth = env
+    created = await c.post(
+        "/api/admin/providers",
+        headers=auth,
+        json={
+            "name": "acme",
+            "kind": "openai",
+            "base_url": "https://acme.example/v1",
+            "api_key": "k",
+            "models": [
+                {
+                    "id": "acme-1",
+                    "name": "Acme 1",
+                    "enabled": True,
+                    "input": ["text"],
+                    "thinking": False,
+                }
+            ],
+        },
+    )
+    assert created.status_code == 201
+
+    ok = await c.put(
+        "/api/providers/active-model",
+        headers=auth,
+        json={"provider_name": "acme", "model": "acme-1"},
+    )
+    assert ok.status_code == 200
+    assert ok.json() == {"provider_name": "acme", "model": "acme-1"}
+
+    for provider_name, model in (("acme", "acme-2"), ("ghost", "acme-1")):
+        rejected = await c.put(
+            "/api/providers/active-model",
+            headers=auth,
+            json={"provider_name": provider_name, "model": model},
+        )
+        assert rejected.status_code == 400, (provider_name, model)
+        assert rejected.json()["error"]["code"] == "MODEL_NOT_AVAILABLE"
+
+    # The failed attempts must not have overwritten the working setting.
+    current = await c.get("/api/providers/active-model", headers=auth)
+    assert current.json() == {"provider_name": "acme", "model": "acme-1"}
