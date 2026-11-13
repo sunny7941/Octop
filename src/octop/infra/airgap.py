@@ -90,7 +90,7 @@ def _pid_alive(pid: int) -> bool:
         return False
     # ``ctypes.windll`` only exists on Windows; this function already returned
     # above on other platforms, and ``getattr`` keeps mypy happy on both.
-    kernel32 = getattr(ctypes, "windll").kernel32
+    kernel32 = getattr(ctypes, "windll").kernel32  # noqa: B009 - see above
     handle = kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
     if not handle:
         return False
