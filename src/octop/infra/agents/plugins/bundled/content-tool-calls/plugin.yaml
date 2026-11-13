@@ -1,0 +1,22 @@
+id: content-tool-calls
+version: 1.2.0
+name: Content Tool Calls
+kind: hook
+entry: main.py
+# Shipped with the wheel: local models that answer with plain-text JSON tool
+# calls instead of native OpenAI tool_calls get those calls re-emitted as real
+# ones, so the agent loop can route to the tool node.
+auto_install: true
+default_enabled: true
+description: >-
+  Some local models (qwen2.5-coder, dmp-*, coder7b, ...) understand the tool
+  schema but answer with a plain-text JSON tool call instead of emitting native
+  OpenAI tool_calls. Octop's agent loop only routes to the tool node when
+  AIMessage.tool_calls is non-empty, so those models can never execute a tool.
+  This plugin registers an after_model middleware that inspects the last
+  assistant message and, when it carries no native tool calls but its text
+  contains a tool call in one of the common textual formats, rewrites the
+  message to expose native tool_calls. Models that already emit native tool
+  calls are untouched. Parsing uses json.JSONDecoder raw_decode rather than
+  regular expressions, so nested braces, brackets and strings inside arguments
+  are handled correctly.

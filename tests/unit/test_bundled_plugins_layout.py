@@ -37,8 +37,8 @@ def _catalog_ids() -> set[str]:
     return found
 
 
-def test_in_tree_plugin_catalog_ships_egress_guard() -> None:
-    assert _catalog_ids() == {"egress-guard"}
+def test_in_tree_plugin_catalog_ships_bundled_plugins() -> None:
+    assert _catalog_ids() == {"content-tool-calls", "egress-guard"}
 
 
 def test_seed_installs_bundled_airgap_disabled(tmp_path: Path) -> None:
@@ -49,21 +49,25 @@ def test_seed_installs_bundled_airgap_disabled(tmp_path: Path) -> None:
         plugins_dir=plugins_dir,
         config_path=config_path,
     )
-    assert copied == ["egress-guard"]
+    assert copied == ["content-tool-calls", "egress-guard"]
     assert (plugins_dir / "egress-guard" / "plugin.yaml").is_file()
+    assert (plugins_dir / "content-tool-calls" / "plugin.yaml").is_file()
     raw = json.loads(config_path.read_text(encoding="utf-8"))
     assert raw["plugins"]["egress-guard"]["enabled"] is False
+    # content-tool-calls is a compatibility shim, on by default.
+    assert raw["plugins"]["content-tool-calls"]["enabled"] is True
 
 
 def test_seed_records_bundled_opt_out_in_settings(tmp_path: Path) -> None:
     """An existing DB has no flag yet; load_installed would default it to enabled."""
     mgr = PluginManager(plugins_dir=tmp_path / "plugins", config_path=tmp_path / "config.json")
-    assert mgr.seed_bundled() == ["egress-guard"]
+    assert mgr.seed_bundled() == ["content-tool-calls", "egress-guard"]
     settings = _FakeSettings()
     mgr._plugin_settings = settings
     mgr.seed_bundled()
-    flag = json.loads(settings.data["plugins.enabled"])["egress-guard"]
-    assert flag is False
+    flags = json.loads(settings.data["plugins.enabled"])
+    assert flags["egress-guard"] is False
+    assert flags["content-tool-calls"] is True
 
 
 def test_upgrade_preserves_legacy_enabled_in_settings(tmp_path: Path) -> None:
@@ -83,7 +87,7 @@ def test_upgrade_preserves_legacy_enabled_in_settings(tmp_path: Path) -> None:
     mgr = PluginManager(plugins_dir=plugins_dir, config_path=config_path)
     settings = _FakeSettings()
     mgr._plugin_settings = settings
-    assert mgr.seed_bundled() == ["egress-guard"]
+    assert mgr.seed_bundled() == ["content-tool-calls", "egress-guard"]
     flag = json.loads(settings.data["plugins.enabled"])["egress-guard"]
     assert flag is True
 
