@@ -4293,6 +4293,7 @@ class AgentManager:
 
         from octop.infra.agents.middleware.binary_read_guard import BinaryReadGuardMiddleware
         from octop.infra.agents.middleware.browser_profile import BrowserProfileMiddleware
+        from octop.infra.agents.middleware.loop_guard import LoopGuardMiddleware
         from octop.infra.agents.middleware.mcp_output_schema import (
             McpOutputSchemaMiddleware,
             harness_handles_mcp_tool_errors,
@@ -4313,7 +4314,10 @@ class AgentManager:
         # OctopUiOffload stays innermost so every outer middleware observes the
         # slimmed content consistently; it only touches octop_ui plugin envelopes,
         # disjoint from the file-tool results ThreadArtifacts cares about.
+        # LoopGuard stays outermost: a refused repeat must not reach any other
+        # middleware, and no side effect of the repeated call may run.
         agent_middleware: list[Any] = [
+            LoopGuardMiddleware(),
             *plugin_middleware,
             TokenQuotaMiddleware(
                 policy_repo=self._repos.user_policy_repo,
