@@ -109,8 +109,10 @@ def host_system_prompt(row: Any, user_repo: Any) -> str:
         else DEFAULT_LOCALE
     )
     briefing = tr("teams.host_briefing", locale)
+    tool_format = tr("teams.host_tool_format", locale)
     custom = str(getattr(row, "system_prompt", None) or "").strip()
-    return f"{custom}\n\n{briefing}".strip() if custom else briefing
+    parts = [p for p in (custom, briefing, tool_format) if p]
+    return "\n\n".join(parts)
 
 
 async def subscribe_with_member_catchup(
@@ -377,13 +379,12 @@ class TeamManager:
         speaker_id: str,
         extra_stamp: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Run one peer turn and fan tokens to the member page and, once the host is idle, the room.
+        """Run one peer turn and fan tokens to the member page and the room wall.
 
-        The host draft is a single token accumulator. Starting the member model
-        while that turn is still streaming splices the two speakers together, so
-        a member waits until the host turn is idle. If the wait expires, member
-        frames still reach the member thread immediately and stay off the room
-        wall until the host goes idle.
+        Member frames go live to the room thread (speaker-stamped) so the user
+        watches each expert work in real time; the host wrap-up is still the
+        room voice. The host turn is not waited on: both speakers can stream at
+        once and the UI separates them by ``speaker_id``.
 
         A ``hitl_required`` pause does not finish the job. The room shows the
         approval card and this call blocks until the user answers, then resumes
@@ -398,12 +399,9 @@ class TeamManager:
         saw_tool_call = False
         decision_payload: dict[str, Any] | None = None
         emitted_tool_error_ids: set[str] = set()
-        hold_room = self._defer_member_wall(speaker_id, member_tid, room_thread_id)
-        host_id = self._room_agent_id(room_thread_id) if hold_room else ""
-        room_open = True
+        is_member = self._is_member_stream(speaker_id, member_tid, room_thread_id)
         room_turn_id = ""
         completed = False
-        buffered: list[dict[str, Any]] = []
         resume_pending: str | None = None
 
         def note_visible(chunk: dict[str, Any]) -> None:
@@ -414,44 +412,7 @@ class TeamManager:
             ):
                 relayed_visible = True
 
-        async def release_held_room() -> None:
-            nonlocal room_open
-            if hold_room and not room_open and self._host_turn_busy(host_id, room_thread_id):
-                opened = await self._wait_host_dispatch_idle(host_id, room_thread_id)
-                if not opened and self._host_turn_busy(host_id, room_thread_id):
-                    logger.warning(
-                        "member wall released while host still streaming host=%s room=%s",
-                        host_id,
-                        room_thread_id,
-                    )
-            if buffered:
-                frames = list(buffered)
-                buffered.clear()
-                for frame in frames:
-                    await self._push_room_frame(
-                        frame,
-                        room_thread_id,
-                        speaker_id,
-                        turn_id=room_turn_id,
-                    )
-                    note_visible(frame)
-                    if str(frame.get("type") or "") == "hitl_required":
-                        await self._announce_member_hitl(frame, room_thread_id, speaker_id)
-            room_open = True
-
         async def emit(chunk: dict[str, Any]) -> None:
-            if hold_room and not room_open and self._host_turn_busy(host_id, room_thread_id):
-                await self._relay_chunk(
-                    chunk,
-                    room_thread_id=room_thread_id,
-                    member_thread_id=member_tid,
-                    speaker_id=speaker_id,
-                    include_room=False,
-                    turn_id=room_turn_id,
-                )
-                buffered.append(chunk)
-                return
-            await release_held_room()
             await self._relay_chunk(
                 chunk,
                 room_thread_id=room_thread_id,
@@ -464,12 +425,9 @@ class TeamManager:
                 await self._announce_member_hitl(chunk, room_thread_id, speaker_id)
 
         try:
-            # Capture the host turn before waiting it out. ``end_turn`` drops
-            # steer state as soon as the host goes idle, which is when members
-            # usually start.
+            # ``end_turn`` drops steer state as soon as the host goes idle, so
+            # pin the room turn before the member graph starts.
             room_turn_id = self._pin_room_turn(room_thread_id)
-            if hold_room and self._host_turn_busy(host_id, room_thread_id):
-                room_open = await self._wait_host_dispatch_idle(host_id, room_thread_id)
             agen = self._agent_manager.stream(speaker_id, payload)
             while True:
                 pause: dict[str, Any] | None = None
@@ -502,7 +460,7 @@ class TeamManager:
                     # Host wrap-up runs the decision model. Member streams stay
                     # off the room wall, including their custom events.
                     decision_custom = (
-                        kind == "custom" and _is_decision_custom(chunk) and not hold_room
+                        kind == "custom" and _is_decision_custom(chunk) and not is_member
                     )
                     if decision_custom:
                         data = chunk.get("data")
@@ -527,7 +485,6 @@ class TeamManager:
                 answered = False
                 try:
                     await emit(relay)
-                    await release_held_room()
                     decisions = await self._wait_member_hitl(pending_id)
                     answered = True
                 finally:
@@ -551,7 +508,6 @@ class TeamManager:
             raise
         finally:
             try:
-                await release_held_room()
                 done: dict[str, Any] = {"type": "done"}
                 if extra_stamp:
                     done = {**done, **extra_stamp}
@@ -566,7 +522,7 @@ class TeamManager:
                 await self._clear_live_member(room_thread_id, speaker_id)
                 self._release_room_turn(
                     room_thread_id,
-                    expect_wrapup=hold_room and completed,
+                    expect_wrapup=is_member and completed,
                 )
         stream_text = "".join(text_parts).strip()
         return {
@@ -581,20 +537,18 @@ class TeamManager:
             "decision": decision_payload,
         }
 
-    def _defer_member_wall(self, speaker_id: str, member_tid: str, room_thread_id: str) -> bool:
-        """Member speech waits for the host. The host wrap-up is already the room voice."""
+    def _is_member_stream(self, speaker_id: str, member_tid: str, room_thread_id: str) -> bool:
+        """True when the speaker is a member/peer stream, not the room's own voice.
+
+        The room's own voice is the host wrap-up, which reuses the room thread
+        id. Member and peer streams are kept off the host's token accumulator;
+        they stream live but keep the room locked for that wrap-up.
+        """
         if not room_thread_id or not speaker_id:
             return False
         if member_tid and member_tid == room_thread_id:
             return False
         return not is_team_agent(self._agent_manager.get_row(speaker_id))
-
-    def _room_agent_id(self, room_thread_id: str) -> str:
-        getter = getattr(self._thread_registry, "get_thread", None)
-        if not callable(getter) or not room_thread_id:
-            return ""
-        row = getter(room_thread_id)
-        return str(getattr(row, "agent_id", "") or "")
 
     def _host_turn_busy(self, host_id: str, room_thread_id: str) -> bool:
         hub = getattr(self._gateway, "ws_hub", None) if self._gateway is not None else None
@@ -1151,7 +1105,6 @@ class TeamManager:
         room_thread_id: str,
         member_thread_id: str,
         speaker_id: str,
-        include_room: bool = True,
         turn_id: str = "",
     ) -> None:
         hub = getattr(self._gateway, "ws_hub", None) if self._gateway is not None else None
@@ -1164,7 +1117,7 @@ class TeamManager:
         member_frame = _with_room_turn_id(chunk, turn_id)
         piece = str(chunk.get("content") or "") if str(chunk.get("type") or "") == "token" else ""
         try:
-            if include_room and room_thread_id:
+            if room_thread_id:
                 async with self._member_wall_lock:
                     await hub.push_to_thread(room_thread_id, stamped)
                     if piece:
@@ -1174,35 +1127,6 @@ class TeamManager:
         except Exception:
             logger.warning(
                 "failed to relay team peer chunk speaker=%s room=%s",
-                speaker_id,
-                room_thread_id,
-                exc_info=True,
-            )
-
-    async def _push_room_frame(
-        self,
-        chunk: dict[str, Any],
-        room_thread_id: str,
-        speaker_id: str,
-        turn_id: str = "",
-    ) -> None:
-        """Push one already-delivered member frame onto the room wall."""
-        hub = getattr(self._gateway, "ws_hub", None) if self._gateway is not None else None
-        if hub is None or not room_thread_id:
-            return
-        stamped = _with_room_turn_id(
-            stamp_stream_speaker(chunk, speaker_id, include_done=True),
-            turn_id,
-        )
-        piece = str(chunk.get("content") or "") if str(chunk.get("type") or "") == "token" else ""
-        try:
-            async with self._member_wall_lock:
-                await hub.push_to_thread(room_thread_id, stamped)
-                if piece:
-                    self._append_live_member(room_thread_id, speaker_id, piece, turn_id)
-        except Exception:
-            logger.warning(
-                "failed to flush team room frame speaker=%s room=%s",
                 speaker_id,
                 room_thread_id,
                 exc_info=True,

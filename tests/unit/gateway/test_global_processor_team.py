@@ -1257,15 +1257,12 @@ async def test_stream_team_peer_relays_reasoning_and_tools(processor_env: dict) 
 
 
 @pytest.mark.asyncio
-async def test_member_tokens_stay_off_the_room_until_the_host_is_idle(
-    processor_env: dict, monkeypatch: pytest.MonkeyPatch
+async def test_member_tokens_stream_to_the_room_live_while_the_host_is_busy(
+    processor_env: dict,
 ) -> None:
     from langchain_core.messages import AIMessage
     from octop_harness.request import ChatRequest
 
-    import octop.infra.agents.teams.team_manager as team_mod
-
-    monkeypatch.setattr(team_mod, "_HOST_IDLE_WAIT_SEC", 0)
     processor = processor_env["processor"]
     gateway = processor_env["gateway"]
     room_frames: list[dict[str, object]] = []
@@ -1306,7 +1303,10 @@ async def test_member_tokens_stay_off_the_room_until_the_host_is_idle(
             break
         await asyncio.sleep(0.01)
     assert any(frame.get("content") == "first" for frame in member_frames)
-    assert not any(frame.get("type") == "token" for frame in room_frames)
+    # The member wall is live: the room sees the expert's tokens as they are
+    # produced, even while the host turn is still marked active.
+    live_tokens = [frame.get("content") for frame in room_frames if frame.get("type") == "token"]
+    assert live_tokens == ["first"]
     gateway.ws_hub.mark_turn_idle("thr_parent")
     gate.set()
     result = await task
@@ -1432,7 +1432,7 @@ async def test_member_hitl_timeout_does_not_finish_the_job(
 
 
 @pytest.mark.asyncio
-async def test_member_model_does_not_start_while_the_host_turn_is_active(
+async def test_member_model_starts_immediately_while_the_host_turn_is_active(
     processor_env: dict,
 ) -> None:
     from langchain_core.messages import AIMessage
@@ -1459,11 +1459,15 @@ async def test_member_model_does_not_start_while_the_host_turn_is_active(
             speaker_id="child",
         )
     )
-    await asyncio.sleep(0.15)
-    assert not started.is_set()
+    # Live member wall: the expert's model runs right away, without waiting
+    # for the host turn to go idle.
+    for _ in range(50):
+        if started.is_set():
+            break
+        await asyncio.sleep(0.01)
+    assert started.is_set()
     gateway.ws_hub.mark_turn_idle("thr_parent")
     result = await task
-    assert started.is_set()
     assert result["stream_text"] == "after host"
 
 
